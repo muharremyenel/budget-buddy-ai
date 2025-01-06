@@ -17,3 +17,16 @@ export interface Transaction {
   date: Date;
   createdAt: Date;
 }
+
+export type TransactionSortOption = 'date' | 'amount' | 'category';
+export type TransactionSortOrder = 'asc' | 'desc';
+
+export interface TransactionFilters {
+  startDate?: Date;
+  endDate?: Date;
+  type?: TransactionType;
+  category?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  searchQuery?: string;
+}

@@ -1,4 +1,4 @@
-import { collection, addDoc, query, where, getDocs, orderBy, doc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, orderBy, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { Transaction } from '../types/transaction';
 
@@ -40,4 +40,15 @@ export const deleteTransaction = async (transactionId: string) => {
   if (!user) throw new Error('No authenticated user');
 
   await deleteDoc(doc(db, 'transactions', transactionId));
+};
+
+export const updateTransaction = async (
+  transactionId: string,
+  updates: Partial<Omit<Transaction, 'id' | 'userId' | 'createdAt'>>
+) => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('No authenticated user');
+
+  const transactionRef = doc(db, 'transactions', transactionId);
+  await updateDoc(transactionRef, updates);
 }; 
