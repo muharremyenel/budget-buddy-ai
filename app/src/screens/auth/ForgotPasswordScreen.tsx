@@ -10,29 +10,30 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type NavigationProp = NativeStackNavigationProp<AuthStackParamList>;
 
-export const LoginScreen = () => {
+export const ForgotPasswordScreen = () => {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [success, setSuccess] = useState(false);
   
   const navigation = useNavigation<NavigationProp>();
-  const { signIn } = useAuth();
+  const { resetPassword } = useAuth();
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please fill in all fields');
+  const handleResetPassword = async () => {
+    if (!email) {
+      setError('Please enter your email address');
       return;
     }
     
     setLoading(true);
     setError('');
+    setSuccess(false);
     
     try {
-      await signIn(email, password);
+      await resetPassword(email);
+      setSuccess(true);
     } catch (err: any) {
-      setError(err.message || 'Failed to sign in');
+      setError(err.message || 'Failed to send reset email');
     } finally {
       setLoading(false);
     }
@@ -52,9 +53,9 @@ export const LoginScreen = () => {
             entering={FadeInDown.delay(200)}
             style={styles.header}
           >
-            <Text variant="displaySmall" style={styles.title}>Welcome Back</Text>
+            <Text variant="displaySmall" style={styles.title}>Reset Password</Text>
             <Text variant="bodyLarge" style={styles.subtitle}>
-              Sign in to continue managing your finances
+              Enter your email address to receive password reset instructions
             </Text>
           </Animated.View>
 
@@ -62,65 +63,46 @@ export const LoginScreen = () => {
             <TextInput
               label="Email"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(text) => {
+                setEmail(text);
+                setError('');
+                setSuccess(false);
+              }}
               mode="outlined"
               keyboardType="email-address"
               autoCapitalize="none"
               left={<TextInput.Icon icon="email" />}
               style={styles.input}
-            />
-
-            <TextInput
-              label="Password"
-              value={password}
-              onChangeText={setPassword}
-              mode="outlined"
-              secureTextEntry={!showPassword}
-              right={
-                <TextInput.Icon 
-                  icon={showPassword ? "eye-off" : "eye"} 
-                  onPress={() => setShowPassword(!showPassword)}
-                />
-              }
-              left={<TextInput.Icon icon="lock" />}
-              style={styles.input}
+              disabled={loading}
             />
 
             {error ? (
               <Text style={styles.error}>{error}</Text>
             ) : null}
 
+            {success ? (
+              <Text style={styles.success}>
+                Reset instructions have been sent to your email
+              </Text>
+            ) : null}
+
             <Button
               mode="contained"
-              onPress={handleLogin}
+              onPress={handleResetPassword}
               loading={loading}
               disabled={loading}
               style={styles.button}
               contentStyle={styles.buttonContent}
             >
-              Sign In
+              Send Reset Instructions
             </Button>
 
             <Button
               mode="text"
-              onPress={() => navigation.navigate('ForgotPassword')}
+              onPress={() => navigation.navigate('Login')}
               style={styles.textButton}
             >
-              Forgot Password?
-            </Button>
-
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>OR</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <Button
-              mode="outlined"
-              onPress={() => navigation.navigate('Register')}
-              style={styles.outlineButton}
-            >
-              Create New Account
+              Back to Login
             </Button>
           </Animated.View>
         </Surface>
@@ -172,30 +154,14 @@ const styles = StyleSheet.create({
   textButton: {
     marginTop: theme.spacing.sm,
   },
-  outlineButton: {
-    marginTop: theme.spacing.md,
-    borderRadius: theme.roundness,
-    borderColor: theme.colors.primary,
-  },
   error: {
     color: theme.colors.error,
     marginBottom: theme.spacing.sm,
     textAlign: 'center',
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: theme.spacing.lg,
+  success: {
+    color: theme.colors.success,
+    marginBottom: theme.spacing.sm,
+    textAlign: 'center',
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: theme.colors.surfaceVariant,
-  },
-  dividerText: {
-    marginHorizontal: theme.spacing.md,
-    color: theme.colors.onSurfaceVariant,
-  },
-});
-
-export default LoginScreen;
+}); 

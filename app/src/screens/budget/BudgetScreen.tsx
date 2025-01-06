@@ -1,158 +1,333 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
-import { 
-  Text, 
-  Card, 
-  Title, 
-  TextInput, 
-  Button, 
-  ProgressBar, 
-  List,
-  useTheme,
-} from 'react-native-paper';
-import { Budget, getCurrentBudget, setBudget } from '../../services/budgetService';
-import { TRANSACTION_CATEGORIES } from '../../constants/categories';
+import { View, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { Text, Surface, FAB, Portal, Dialog, TextInput, Button, List, IconButton, ProgressBar, Chip } from 'react-native-paper';
+import { useAuth } from '../../contexts/AuthContext';
+import { getBudget, setBudget, getBudgetHistory } from '../../services/budgetService';
 import { getTransactions } from '../../services/transactionService';
+import { Budget } from '../../types/budget';
+import { Transaction } from '../../types/transaction';
+import { TRANSACTION_CATEGORIES } from '../../constants/categories';
+import { theme } from '../../theme';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { LineChartCard } from '../../components/charts/LineChartCard';
+import { PieChartCard } from '../../components/charts/PieChartCard';
 
 export const BudgetScreen = () => {
-  const theme = useTheme();
+  const { user } = useAuth();
   const [budget, setBudgetState] = useState<Budget | null>(null);
-  const [totalBudget, setTotalBudget] = useState('');
-  const [categoryBudgets, setCategoryBudgets] = useState<{[key: string]: string}>({});
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [budgetHistory, setBudgetHistory] = useState<Budget[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expenses, setExpenses] = useState<{[key: string]: number}>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [error, setError] = useState('');
+
+  // New Budget State
+  const [newBudget, setNewBudget] = useState({
+    amount: '',
+    period: 'monthly' as 'monthly' | 'weekly',
+    categoryLimits: {} as Record<string, number>,
+  });
 
   useEffect(() => {
-    loadBudget();
-    loadExpenses();
+    loadData();
   }, []);
 
-  const loadBudget = async () => {
+  const loadData = async () => {
     try {
-      const currentBudget = await getCurrentBudget();
-      if (currentBudget) {
-        setBudgetState(currentBudget);
-        setTotalBudget(currentBudget.totalBudget.toString());
-        const budgets: {[key: string]: string} = {};
-        Object.entries(currentBudget.categories).forEach(([category, amount]) => {
-          budgets[category] = amount.toString();
-        });
-        setCategoryBudgets(budgets);
-      }
+      const [budgetData, transactionsData, historyData] = await Promise.all([
+        getBudget(),
+        getTransactions(),
+        getBudgetHistory(),
+      ]);
+      setBudgetState(budgetData);
+      setTransactions(transactionsData);
+      setBudgetHistory(historyData);
     } catch (error) {
-      console.error('Error loading budget:', error);
+      console.error('Error loading budget data:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleSetBudget = async () => {
+    if (!newBudget.amount) {
+      setError('Please enter a budget amount');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await setBudget({
+        ...newBudget,
+        amount: parseFloat(newBudget.amount),
+      });
+      setShowAddDialog(false);
+      loadData();
+      resetNewBudget();
+    } catch (error) {
+      setError('Failed to set budget');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadExpenses = async () => {
-    try {
-      const transactions = await getTransactions();
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      
-      const monthlyExpenses = transactions
-        .filter(t => 
-          t.type === 'expense' && 
-          t.date.toISOString().slice(0, 7) === currentMonth
-        )
-        .reduce((acc, t) => {
-          acc[t.category] = (acc[t.category] || 0) + t.amount;
-          return acc;
-        }, {} as {[key: string]: number});
-      
-      setExpenses(monthlyExpenses);
-    } catch (error) {
-      console.error('Error loading expenses:', error);
-    }
+  const resetNewBudget = () => {
+    setNewBudget({
+      amount: '',
+      period: 'monthly',
+      categoryLimits: {},
+    });
+    setError('');
   };
 
-  const handleSaveBudget = async () => {
-    try {
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      const categories: {[key: string]: number} = {};
-      
-      Object.entries(categoryBudgets).forEach(([category, amount]) => {
-        if (amount) {
-          categories[category] = parseFloat(amount);
-        }
-      });
-
-      await setBudget({
-        totalBudget: parseFloat(totalBudget),
-        categories,
-        month: currentMonth,
-      });
-
-      loadBudget();
-    } catch (error) {
-      console.error('Error saving budget:', error);
-    }
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadData();
   };
+
+  const calculateSpending = () => {
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+
+    return transactions
+      .filter(t => {
+        const transactionDate = new Date(t.date);
+        return (
+          t.type === 'expense' &&
+          transactionDate.getMonth() === currentMonth &&
+          transactionDate.getFullYear() === currentYear
+        );
+      })
+      .reduce((total, t) => total + t.amount, 0);
+  };
+
+  const calculateCategorySpending = () => {
+    const spending: Record<string, number> = {};
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+
+    transactions
+      .filter(t => {
+        const transactionDate = new Date(t.date);
+        return (
+          t.type === 'expense' &&
+          transactionDate.getMonth() === currentMonth &&
+          transactionDate.getFullYear() === currentYear
+        );
+      })
+      .forEach(t => {
+        spending[t.category] = (spending[t.category] || 0) + t.amount;
+      });
+
+    return spending;
+  };
+
+  const totalSpending = calculateSpending();
+  const categorySpending = calculateCategorySpending();
+  const spendingPercentage = budget ? (totalSpending / budget.amount) * 100 : 0;
+  const remainingBudget = budget ? budget.amount - totalSpending : 0;
+
+  const chartData = {
+    labels: budgetHistory.map(b => new Date(b.date).toLocaleDateString('en-US', { month: 'short' })),
+    datasets: [
+      {
+        data: budgetHistory.map(b => b.amount),
+        color: (opacity = 1) => `rgba(239, 68, 68, ${opacity})`, // Red for budget
+        strokeWidth: 2,
+      },
+      {
+        data: budgetHistory.map(() => calculateSpending()),
+        color: (opacity = 1) => `rgba(16, 185, 129, ${opacity})`, // Green for spending
+        strokeWidth: 2,
+      },
+    ],
+  };
+
+  const pieChartData = Object.entries(categorySpending).map(([categoryId, amount]) => {
+    const category = TRANSACTION_CATEGORIES.find(cat => cat.id === categoryId);
+    return {
+      name: category?.name || categoryId,
+      amount,
+    };
+  });
 
   return (
     <View style={styles.container}>
-      <ScrollView>
-        <Card style={styles.card}>
-          <Card.Content>
-            <Title>Monthly Budget</Title>
+      {/* Budget Overview */}
+      <Surface style={styles.header}>
+        <Text variant="titleLarge" style={styles.title}>Budget Overview</Text>
+        <View style={styles.budgetInfo}>
+          <View style={styles.budgetRow}>
+            <Text variant="titleMedium">Monthly Budget:</Text>
+            <Text variant="titleMedium" style={styles.budgetAmount}>
+              ${budget?.amount.toFixed(2) || '0.00'}
+            </Text>
+          </View>
+          <View style={styles.budgetRow}>
+            <Text variant="titleMedium">Total Spending:</Text>
+            <Text
+              variant="titleMedium"
+              style={[styles.budgetAmount, { color: theme.colors.error }]}
+            >
+              ${totalSpending.toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.budgetRow}>
+            <Text variant="titleMedium">Remaining:</Text>
+            <Text
+              variant="titleMedium"
+              style={[
+                styles.budgetAmount,
+                { color: remainingBudget >= 0 ? theme.colors.success : theme.colors.error }
+              ]}
+            >
+              ${remainingBudget.toFixed(2)}
+            </Text>
+          </View>
+        </View>
+        <ProgressBar
+          progress={spendingPercentage / 100}
+          color={spendingPercentage > 100 ? theme.colors.error : theme.colors.primary}
+          style={styles.progressBar}
+        />
+        <Text style={styles.progressText}>
+          {spendingPercentage.toFixed(1)}% of budget used
+        </Text>
+      </Surface>
+
+      <ScrollView
+        style={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+      >
+        {/* Budget History Chart */}
+        <Surface style={styles.card}>
+          <Text variant="titleMedium" style={styles.cardTitle}>Budget History</Text>
+          <LineChartCard
+            title="Budget vs Spending"
+            data={chartData}
+            delay={200}
+          />
+        </Surface>
+
+        {/* Category Spending */}
+        <Surface style={styles.card}>
+          <Text variant="titleMedium" style={styles.cardTitle}>Category Spending</Text>
+          <PieChartCard
+            title="Spending by Category"
+            data={pieChartData}
+            delay={300}
+          />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryList}>
+            {Object.entries(categorySpending).map(([categoryId, amount]) => {
+              const category = TRANSACTION_CATEGORIES.find(cat => cat.id === categoryId);
+              const limit = budget?.categoryLimits?.[categoryId] || 0;
+              const percentage = limit > 0 ? (amount / limit) * 100 : 0;
+
+              return (
+                <Surface key={categoryId} style={styles.categoryCard}>
+                  <List.Item
+                    title={category?.name || categoryId}
+                    description={`$${amount.toFixed(2)}`}
+                    left={props => (
+                      <List.Icon {...props} icon={category?.icon || 'cash'} />
+                    )}
+                  />
+                  {limit > 0 && (
+                    <View style={styles.categoryLimit}>
+                      <ProgressBar
+                        progress={percentage / 100}
+                        color={percentage > 100 ? theme.colors.error : theme.colors.primary}
+                        style={styles.categoryProgress}
+                      />
+                      <Text style={styles.categoryLimitText}>
+                        {percentage.toFixed(1)}% of ${limit.toFixed(2)}
+                      </Text>
+                    </View>
+                  )}
+                </Surface>
+              );
+            })}
+          </ScrollView>
+        </Surface>
+      </ScrollView>
+
+      {/* Add/Edit Budget FAB */}
+      <FAB
+        icon={budget ? 'pencil' : 'plus'}
+        style={styles.fab}
+        onPress={() => setShowAddDialog(true)}
+      />
+
+      {/* Set Budget Dialog */}
+      <Portal>
+        <Dialog visible={showAddDialog} onDismiss={() => {
+          setShowAddDialog(false);
+          resetNewBudget();
+        }}>
+          <Dialog.Title>{budget ? 'Edit Budget' : 'Set Budget'}</Dialog.Title>
+          <Dialog.Content>
             <TextInput
-              label="Total Budget"
-              value={totalBudget}
-              onChangeText={setTotalBudget}
+              label="Monthly Budget Amount"
+              value={newBudget.amount}
+              onChangeText={text => {
+                const amount = text.replace(/[^0-9.]/g, '');
+                setNewBudget(prev => ({ ...prev, amount }));
+                setError('');
+              }}
               keyboardType="decimal-pad"
-              mode="outlined"
               style={styles.input}
             />
-          </Card.Content>
-        </Card>
 
-        <Card style={styles.card}>
-          <Card.Content>
-            <Title>Category Budgets</Title>
-            {TRANSACTION_CATEGORIES
-              .filter(cat => cat.type === 'expense')
-              .map(category => (
-                <View key={category.id} style={styles.categoryContainer}>
-                  <Text style={styles.categoryName}>{category.name}</Text>
+            <Text variant="titleSmall" style={styles.sectionTitle}>Category Limits (Optional)</Text>
+            <ScrollView style={styles.categoryLimits}>
+              {TRANSACTION_CATEGORIES
+                .filter(cat => cat.type === 'expense')
+                .map(category => (
                   <TextInput
-                    label="Budget"
-                    value={categoryBudgets[category.id] || ''}
-                    onChangeText={(value) => 
-                      setCategoryBudgets(prev => ({...prev, [category.id]: value}))
-                    }
+                    key={category.id}
+                    label={`${category.name} Limit`}
+                    value={newBudget.categoryLimits[category.id]?.toString() || ''}
+                    onChangeText={text => {
+                      const amount = text.replace(/[^0-9.]/g, '');
+                      setNewBudget(prev => ({
+                        ...prev,
+                        categoryLimits: {
+                          ...prev.categoryLimits,
+                          [category.id]: parseFloat(amount) || 0,
+                        },
+                      }));
+                    }}
                     keyboardType="decimal-pad"
-                    mode="outlined"
-                    style={styles.categoryInput}
+                    style={styles.input}
+                    left={<TextInput.Icon icon={category.icon || 'cash'} />}
                   />
-                  <ProgressBar
-                    progress={
-                      expenses[category.id] 
-                        ? expenses[category.id] / (parseFloat(categoryBudgets[category.id]) || 1)
-                        : 0
-                    }
-                    color={
-                      expenses[category.id] > (parseFloat(categoryBudgets[category.id]) || 0)
-                        ? theme.colors.error
-                        : theme.colors.primary
-                    }
-                    style={styles.progressBar}
-                  />
-                  <Text style={styles.expenseText}>
-                    Spent: ${expenses[category.id]?.toFixed(2) || '0.00'}
-                  </Text>
-                </View>
-              ))}
+                ))}
+            </ScrollView>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => {
+              setShowAddDialog(false);
+              resetNewBudget();
+            }}>Cancel</Button>
             <Button
               mode="contained"
-              onPress={handleSaveBudget}
-              style={styles.saveButton}
+              onPress={handleSetBudget}
+              loading={loading}
+              disabled={loading}
             >
-              Save Budget
+              {budget ? 'Update Budget' : 'Set Budget'}
             </Button>
-          </Card.Content>
-        </Card>
-      </ScrollView>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 };
@@ -160,35 +335,89 @@ export const BudgetScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.background,
   },
-  card: {
-    margin: 16,
-    marginTop: 8,
+  header: {
+    backgroundColor: theme.colors.surface,
+    padding: theme.spacing.md,
+    elevation: 2,
   },
-  input: {
-    marginTop: 8,
+  title: {
+    marginBottom: theme.spacing.sm,
   },
-  categoryContainer: {
-    marginVertical: 8,
+  budgetInfo: {
+    marginBottom: theme.spacing.md,
   },
-  categoryName: {
-    fontSize: 16,
-    marginBottom: 4,
+  budgetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: theme.spacing.xs,
   },
-  categoryInput: {
-    marginBottom: 8,
+  budgetAmount: {
+    fontWeight: 'bold',
   },
   progressBar: {
     height: 8,
     borderRadius: 4,
   },
-  expenseText: {
-    marginTop: 4,
-    fontSize: 12,
+  progressText: {
+    textAlign: 'center',
+    marginTop: theme.spacing.xs,
+    color: theme.colors.onSurfaceVariant,
   },
-  saveButton: {
-    marginTop: 16,
+  content: {
+    flex: 1,
+  },
+  card: {
+    margin: theme.spacing.sm,
+    padding: theme.spacing.md,
+    borderRadius: theme.roundness,
+    elevation: 1,
+  },
+  cardTitle: {
+    marginBottom: theme.spacing.sm,
+  },
+  categoryList: {
+    marginTop: theme.spacing.sm,
+  },
+  categoryCard: {
+    width: 200,
+    marginRight: theme.spacing.sm,
+    borderRadius: theme.roundness,
+    elevation: 1,
+  },
+  categoryLimit: {
+    padding: theme.spacing.sm,
+  },
+  categoryProgress: {
+    marginBottom: theme.spacing.xs,
+  },
+  categoryLimitText: {
+    fontSize: 12,
+    color: theme.colors.onSurfaceVariant,
+    textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    margin: theme.spacing.md,
+    right: 0,
+    bottom: 0,
+    backgroundColor: theme.colors.primary,
+  },
+  input: {
+    marginBottom: theme.spacing.sm,
+    backgroundColor: theme.colors.surface,
+  },
+  sectionTitle: {
+    marginTop: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+  },
+  categoryLimits: {
+    maxHeight: 200,
+  },
+  error: {
+    color: theme.colors.error,
+    marginTop: theme.spacing.xs,
   },
 });
 

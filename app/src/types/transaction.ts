@@ -1,10 +1,12 @@
 export type TransactionType = 'income' | 'expense';
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 export type TransactionCategory = {
   id: string;
   name: string;
   type: TransactionType;
   icon?: string;
+  keywords?: string[]; // For smart categorization
 };
 
 export interface Transaction {
@@ -16,6 +18,17 @@ export interface Transaction {
   description: string;
   date: Date;
   createdAt: Date;
+  isRecurring?: boolean;
+  recurrence?: {
+    frequency: RecurrenceFrequency;
+    interval: number; // e.g., every 2 weeks
+    startDate: Date;
+    endDate?: Date;
+    lastProcessed?: Date;
+  };
+  suggestedCategory?: string; // For smart categorization
+  notes?: string;
+  tags?: string[];
 }
 
 export type TransactionSortOption = 'date' | 'amount' | 'category';
@@ -29,4 +42,6 @@ export interface TransactionFilters {
   minAmount?: number;
   maxAmount?: number;
   searchQuery?: string;
+  isRecurring?: boolean;
+  tags?: string[];
 }

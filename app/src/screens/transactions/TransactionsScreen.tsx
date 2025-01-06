@@ -1,63 +1,45 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StyleSheet } from 'react-native';
-import { 
-  Text, 
-  FAB, 
-  Portal, 
-  Modal, 
-  TextInput, 
-  Button, 
-  Title,
-  List,
-  useTheme,
-  SegmentedButtons,
-  IconButton,
-  Searchbar,
-  Menu,
-  Divider,
-  Chip,
-} from 'react-native-paper';
+import { View, StyleSheet, ScrollView, RefreshControl, Alert } from 'react-native';
+import { Text, Surface, FAB, Portal, Dialog, TextInput, Button, List, IconButton, Menu, Searchbar, Chip } from 'react-native-paper';
 import { useAuth } from '../../contexts/AuthContext';
-import { 
-  TransactionType, 
-  Transaction, 
-  TransactionSortOption, 
-  TransactionSortOrder,
-  TransactionFilters 
-} from '../../types/transaction';
-import { addTransaction, getTransactions, deleteTransaction, updateTransaction } from '../../services/transactionService';
-import { TRANSACTION_CATEGORIES, getCategoriesByType } from '../../constants/categories';
+import { getTransactions, addTransaction, deleteTransaction, updateTransaction } from '../../services/transactionService';
+import { Transaction } from '../../types/transaction';
+import { TRANSACTION_CATEGORIES } from '../../constants/categories';
+import { theme } from '../../theme';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 export const TransactionsScreen = () => {
   const { user } = useAuth();
-  const theme = useTheme();
-  const [visible, setVisible] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [currentTransaction, setCurrentTransaction] = useState<Transaction | null>(null);
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [type, setType] = useState<TransactionType>('expense');
-  const [category, setCategory] = useState('');
-  const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState<TransactionFilters>({});
-  const [sortBy, setSortBy] = useState<TransactionSortOption>('date');
-  const [sortOrder, setSortOrder] = useState<TransactionSortOrder>('desc');
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
-  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedType, setSelectedType] = useState<'all' | 'income' | 'expense'>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [showSortMenu, setShowSortMenu] = useState(false);
+
+  // New Transaction State
+  const [newTransaction, setNewTransaction] = useState({
+    amount: '',
+    type: 'expense' as 'income' | 'expense',
+    category: '',
+    description: '',
+    date: new Date(),
+  });
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [error, setError] = useState('');
+
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
 
   useEffect(() => {
     loadTransactions();
   }, []);
-
-  useEffect(() => {
-    applyFiltersAndSort();
-  }, [transactions, filters, searchQuery, sortBy, sortOrder]);
 
   const loadTransactions = async () => {
     try {
@@ -65,364 +47,525 @@ export const TransactionsScreen = () => {
       setTransactions(data);
     } catch (error) {
       console.error('Error loading transactions:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const applyFiltersAndSort = () => {
-    let filtered = [...transactions];
-
-    // Apply search
-    if (searchQuery) {
-      filtered = filtered.filter(t => 
-        t.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        getCategoryName(t.category).toLowerCase().includes(searchQuery.toLowerCase())
-      );
+  const handleAddTransaction = async () => {
+    if (!newTransaction.amount || !newTransaction.category || !newTransaction.description) {
+      setError('Please fill in all fields');
+      return;
     }
 
-    // Apply filters
-    if (filters.startDate) {
-      filtered = filtered.filter(t => new Date(t.date) >= filters.startDate!);
-    }
-    if (filters.endDate) {
-      filtered = filtered.filter(t => new Date(t.date) <= filters.endDate!);
-    }
-    if (filters.type) {
-      filtered = filtered.filter(t => t.type === filters.type);
-    }
-    if (filters.category) {
-      filtered = filtered.filter(t => t.category === filters.category);
-    }
-    if (filters.minAmount) {
-      filtered = filtered.filter(t => t.amount >= filters.minAmount!);
-    }
-    if (filters.maxAmount) {
-      filtered = filtered.filter(t => t.amount <= filters.maxAmount!);
-    }
-
-    // Apply sorting
-    filtered.sort((a, b) => {
-      let comparison = 0;
-      switch (sortBy) {
-        case 'date':
-          comparison = new Date(b.date).getTime() - new Date(a.date).getTime();
-          break;
-        case 'amount':
-          comparison = b.amount - a.amount;
-          break;
-        case 'category':
-          comparison = getCategoryName(a.category).localeCompare(getCategoryName(b.category));
-          break;
-      }
-      return sortOrder === 'asc' ? -comparison : comparison;
-    });
-
-    setFilteredTransactions(filtered);
-  };
-
-  const handleAddOrUpdateTransaction = async () => {
-    if (!amount || !description || !category) return;
-    
-    setLoading(true);
     try {
-      if (editMode && currentTransaction) {
-        await updateTransaction(currentTransaction.id, {
-          amount: parseFloat(amount),
-          description,
-          type,
-          category,
-          date: new Date(),
-        });
-      } else {
-        await addTransaction({
-          amount: parseFloat(amount),
-          description,
-          type,
-          category,
-          date: new Date(),
-        });
-      }
-      setVisible(false);
-      resetForm();
+      setLoading(true);
+      await addTransaction({
+        ...newTransaction,
+        amount: parseFloat(newTransaction.amount),
+      });
+      setShowAddDialog(false);
       loadTransactions();
+      resetNewTransaction();
     } catch (error) {
-      console.error('Error with transaction:', error);
+      setError('Failed to add transaction');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleEditTransaction = (transaction: Transaction) => {
-    setCurrentTransaction(transaction);
-    setAmount(transaction.amount.toString());
-    setDescription(transaction.description);
-    setType(transaction.type);
-    setCategory(transaction.category);
-    setEditMode(true);
-    setVisible(true);
+  const resetNewTransaction = () => {
+    setNewTransaction({
+      amount: '',
+      type: 'expense',
+      category: '',
+      description: '',
+      date: new Date(),
+    });
+    setError('');
   };
 
-  const handleDeleteTransaction = async (id: string) => {
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadTransactions();
+  };
+
+  const filteredTransactions = transactions
+    .filter(transaction => {
+      const matchesSearch = transaction.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesType = selectedType === 'all' || transaction.type === selectedType;
+      const matchesCategory = !selectedCategory || transaction.category === selectedCategory;
+      return matchesSearch && matchesType && matchesCategory;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'date') {
+        return sortOrder === 'desc' 
+          ? new Date(b.date).getTime() - new Date(a.date).getTime()
+          : new Date(a.date).getTime() - new Date(b.date).getTime();
+      } else {
+        return sortOrder === 'desc'
+          ? b.amount - a.amount
+          : a.amount - b.amount;
+      }
+    });
+
+  const handleDeleteTransaction = (transaction: Transaction) => {
+    Alert.alert(
+      'Delete Transaction',
+      'Are you sure you want to delete this transaction?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              await deleteTransaction(transaction.id);
+              loadTransactions();
+            } catch (error) {
+              console.error('Error deleting transaction:', error);
+              Alert.alert('Error', 'Failed to delete transaction');
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleEditTransaction = async () => {
+    if (!selectedTransaction || !newTransaction.amount || !newTransaction.category || !newTransaction.description) {
+      setError('Please fill in all fields');
+      return;
+    }
+
     try {
-      await deleteTransaction(id);
+      setLoading(true);
+      await updateTransaction(selectedTransaction.id, {
+        ...newTransaction,
+        amount: parseFloat(newTransaction.amount),
+      });
+      setShowEditDialog(false);
       loadTransactions();
+      resetNewTransaction();
+      setSelectedTransaction(null);
     } catch (error) {
-      console.error('Error deleting transaction:', error);
+      setError('Failed to update transaction');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setAmount('');
-    setDescription('');
-    setType('expense');
-    setCategory('');
-    setEditMode(false);
-    setCurrentTransaction(null);
+  const openEditDialog = (transaction: Transaction) => {
+    setSelectedTransaction(transaction);
+    setNewTransaction({
+      amount: transaction.amount.toString(),
+      type: transaction.type,
+      category: transaction.category,
+      description: transaction.description,
+      date: new Date(transaction.date),
+    });
+    setShowEditDialog(true);
   };
 
-  const resetFilters = () => {
-    setFilters({});
-    setSearchQuery('');
-  };
-
-  const getCategoryName = (categoryId: string) => {
-    const category = TRANSACTION_CATEGORIES.find(cat => cat.id === categoryId);
-    return category?.name || categoryId;
-  };
-  
-
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Searchbar
-          placeholder="Search transactions"
-          onChangeText={setSearchQuery}
-          value={searchQuery}
-          style={styles.searchBar}
-        />
-        <IconButton
-          icon="filter-variant"
-          onPress={() => setShowFilters(!showFilters)}
-        />
-        <Menu
-          visible={menuVisible}
-          onDismiss={() => setMenuVisible(false)}
-          anchor={
-            <IconButton
-              icon="sort"
-              onPress={() => setMenuVisible(true)}
+  const renderTransaction = (transaction: Transaction) => {
+    const category = TRANSACTION_CATEGORIES.find(cat => cat.id === transaction.category);
+    return (
+      <Surface key={transaction.id} style={styles.transactionCard}>
+        <List.Item
+          title={transaction.description}
+          description={new Date(transaction.date).toLocaleDateString()}
+          left={props => (
+            <List.Icon
+              {...props}
+              icon={category?.icon || 'cash'}
+              color={transaction.type === 'expense' ? theme.colors.error : theme.colors.success}
             />
-          }
-        >
-          <Menu.Item 
-            onPress={() => { setSortBy('date'); setMenuVisible(false); }} 
-            title="Sort by Date"
-            leadingIcon={sortBy === 'date' ? 'check' : undefined}
-          />
-          <Menu.Item 
-            onPress={() => { setSortBy('amount'); setMenuVisible(false); }} 
-            title="Sort by Amount"
-            leadingIcon={sortBy === 'amount' ? 'check' : undefined}
-          />
-          <Menu.Item 
-            onPress={() => { setSortBy('category'); setMenuVisible(false); }} 
-            title="Sort by Category"
-            leadingIcon={sortBy === 'category' ? 'check' : undefined}
-          />
-          <Divider />
-          <Menu.Item 
-            onPress={() => { setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); setMenuVisible(false); }} 
-            title={`Order: ${sortOrder.toUpperCase()}`}
-          />
-        </Menu>
-      </View>
-
-      {showFilters && (
-        <View style={styles.filters}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <Button
-              mode="outlined"
-              onPress={() => setShowStartDatePicker(true)}
-              style={styles.dateInput}
-            >
-              {filters.startDate ? filters.startDate.toLocaleDateString() : 'Start Date'}
-            </Button>
-            {showStartDatePicker && (
-              <DateTimePicker
-                value={filters.startDate || new Date()}
-                onChange={(event, date) => {
-                  setShowStartDatePicker(false);
-                  if (date) setFilters(prev => ({ ...prev, startDate: date }));
-                }}
-              />
-            )}
-            <Button
-              mode="outlined"
-              onPress={() => setShowEndDatePicker(true)}
-              style={styles.dateInput}
-            >
-              {filters.endDate ? filters.endDate.toLocaleDateString() : 'End Date'}
-            </Button>
-            {showEndDatePicker && (
-              <DateTimePicker
-                value={filters.endDate || new Date()}
-                onChange={(event, date) => {
-                  setShowEndDatePicker(false);
-                  if (date) setFilters(prev => ({ ...prev, endDate: date }));
-                }}
-              />
-            )}
-            <TextInput
-              label="Min Amount"
-              value={filters.minAmount?.toString()}
-              onChangeText={(value) => setFilters(prev => ({ ...prev, minAmount: parseFloat(value) || undefined }))}
-              keyboardType="numeric"
-              mode="outlined"
-              style={styles.input}
-            />
-            <TextInput
-              label="Max Amount"
-              value={filters.maxAmount?.toString()}
-              onChangeText={(value) => setFilters(prev => ({ ...prev, maxAmount: parseFloat(value) || undefined }))}
-              keyboardType="numeric"
-              mode="outlined"
-              style={styles.input}
-            />
-          </ScrollView>
-          <View style={styles.filterChips}>
-            <Chip
-              selected={filters.type === 'expense'}
-              onPress={() => setFilters(prev => ({ ...prev, type: prev.type === 'expense' ? undefined : 'expense' }))}
-              style={styles.chip}
-            >
-              Expenses
-            </Chip>
-            <Chip
-              selected={filters.type === 'income'}
-              onPress={() => setFilters(prev => ({ ...prev, type: prev.type === 'income' ? undefined : 'income' }))}
-              style={styles.chip}
-            >
-              Income
-            </Chip>
-            <Button onPress={resetFilters}>Reset Filters</Button>
-          </View>
-        </View>
-      )}
-
-      <ScrollView style={styles.list}>
-        {filteredTransactions.map((transaction) => (
-          <List.Item
-            key={transaction.id}
-            title={transaction.description}
-            description={`${getCategoryName(transaction.category)} • ${new Date(transaction.date).toLocaleDateString()}`}
-            left={props => (
-              <List.Icon 
-                {...props} 
-                icon={TRANSACTION_CATEGORIES.find(cat => cat.id === transaction.category)?.icon || 'cash'}
-              />
-            )}
-            right={() => (
-              <View style={styles.actionContainer}>
-                <Text
-                  style={[
-                    styles.amount,
-                    { color: transaction.type === 'expense' ? theme.colors.error : theme.colors.primary },
-                  ]}
-                >
-                  {transaction.type === 'expense' ? '-' : '+'}${transaction.amount.toFixed(2)}
-                </Text>
+          )}
+          right={() => (
+            <View style={styles.amountContainer}>
+              <Text
+                style={[
+                  styles.amount,
+                  {
+                    color: transaction.type === 'expense'
+                      ? theme.colors.error
+                      : theme.colors.success
+                  }
+                ]}
+              >
+                {transaction.type === 'expense' ? '-' : '+'}${transaction.amount.toFixed(2)}
+              </Text>
+              <Text style={styles.category}>{category?.name}</Text>
+              <View style={styles.actionButtons}>
                 <IconButton
                   icon="pencil"
                   size={20}
-                  onPress={() => handleEditTransaction(transaction)}
+                  onPress={() => openEditDialog(transaction)}
                 />
                 <IconButton
                   icon="delete"
                   size={20}
-                  onPress={() => handleDeleteTransaction(transaction.id)}
+                  iconColor={theme.colors.error}
+                  onPress={() => handleDeleteTransaction(transaction)}
                 />
               </View>
-            )}
+            </View>
+          )}
+        />
+      </Surface>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      {/* Search and Filters */}
+      <Surface style={styles.header}>
+        <Searchbar
+          placeholder="Search transactions"
+          onChangeText={setSearchQuery}
+          value={searchQuery}
+          style={styles.searchbar}
+        />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filtersContainer}
+        >
+          <Chip
+            selected={selectedType === 'all'}
+            onPress={() => setSelectedType('all')}
+            style={styles.chip}
+          >
+            All
+          </Chip>
+          <Chip
+            selected={selectedType === 'expense'}
+            onPress={() => setSelectedType('expense')}
+            style={styles.chip}
+          >
+            Expenses
+          </Chip>
+          <Chip
+            selected={selectedType === 'income'}
+            onPress={() => setSelectedType('income')}
+            style={styles.chip}
+          >
+            Income
+          </Chip>
+          {selectedCategory && (
+            <Chip
+              onClose={() => setSelectedCategory(null)}
+              style={styles.chip}
+            >
+              {TRANSACTION_CATEGORIES.find(cat => cat.id === selectedCategory)?.name}
+            </Chip>
+          )}
+        </ScrollView>
+      </Surface>
+
+      {/* Sort Menu */}
+      <Surface style={styles.sortContainer}>
+        <Menu
+          visible={showSortMenu}
+          onDismiss={() => setShowSortMenu(false)}
+          anchor={
+            <Button
+              mode="outlined"
+              onPress={() => setShowSortMenu(true)}
+              icon="sort"
+              style={styles.sortButton}
+            >
+              Sort by: {sortBy === 'date' ? 'Date' : 'Amount'} ({sortOrder === 'desc' ? 'Desc' : 'Asc'})
+            </Button>
+          }
+        >
+          <Menu.Item
+            onPress={() => {
+              setSortBy('date');
+              setSortOrder('desc');
+              setShowSortMenu(false);
+            }}
+            title="Date (Newest)"
           />
-        ))}
+          <Menu.Item
+            onPress={() => {
+              setSortBy('date');
+              setSortOrder('asc');
+              setShowSortMenu(false);
+            }}
+            title="Date (Oldest)"
+          />
+          <Menu.Item
+            onPress={() => {
+              setSortBy('amount');
+              setSortOrder('desc');
+              setShowSortMenu(false);
+            }}
+            title="Amount (Highest)"
+          />
+          <Menu.Item
+            onPress={() => {
+              setSortBy('amount');
+              setSortOrder('asc');
+              setShowSortMenu(false);
+            }}
+            title="Amount (Lowest)"
+          />
+        </Menu>
+      </Surface>
+
+      {/* Transactions List */}
+      <ScrollView
+        style={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+      >
+        {filteredTransactions.length > 0 ? (
+          filteredTransactions.map(renderTransaction)
+        ) : (
+          <View style={styles.emptyState}>
+            <Text variant="bodyLarge" style={styles.emptyStateText}>
+              No transactions found
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
-      <Portal>
-        <Modal
-          visible={visible}
-          onDismiss={() => {
-            setVisible(false);
-            resetForm();
-          }}
-          contentContainerStyle={styles.modal}
-        >
-          <Title style={styles.modalTitle}>
-            {editMode ? 'Edit Transaction' : 'Add Transaction'}
-          </Title>
-          
-          <SegmentedButtons
-            value={type}
-            onValueChange={value => {
-              setType(value as TransactionType);
-              setCategory('');
-            }}
-            buttons={[
-              { value: 'expense', label: 'Expense' },
-              { value: 'income', label: 'Income' },
-            ]}
-            style={styles.segmentedButtons}
-          />
-
-          <TextInput
-            label="Amount"
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            mode="outlined"
-            style={styles.input}
-          />
-
-          <TextInput
-            label="Description"
-            value={description}
-            onChangeText={setDescription}
-            mode="outlined"
-            style={styles.input}
-          />
-
-          <ScrollView horizontal style={styles.categoryContainer}>
-            {getCategoriesByType(type).map((cat) => (
-              <Button
-                key={cat.id}
-                mode={category === cat.id ? 'contained' : 'outlined'}
-                onPress={() => setCategory(cat.id)}
-                style={styles.categoryButton}
-                icon={cat.icon}
-              >
-                {cat.name}
-              </Button>
-            ))}
-          </ScrollView>
-
-          <Button
-            mode="contained"
-            onPress={handleAddOrUpdateTransaction}
-            loading={loading}
-            disabled={loading || !amount || !description || !category}
-            style={styles.button}
-          >
-            {editMode ? 'Update Transaction' : 'Add Transaction'}
-          </Button>
-        </Modal>
-      </Portal>
-
+      {/* Add Transaction FAB */}
       <FAB
         icon="plus"
         style={styles.fab}
-        onPress={() => {
-          resetForm();
-          setVisible(true);
-        }}
+        onPress={() => setShowAddDialog(true)}
       />
+
+      {/* Add Transaction Dialog */}
+      <Portal>
+        <Dialog visible={showAddDialog} onDismiss={() => {
+          setShowAddDialog(false);
+          resetNewTransaction();
+        }}>
+          <Dialog.Title>Add Transaction</Dialog.Title>
+          <Dialog.Content>
+            <TextInput
+              label="Amount"
+              value={newTransaction.amount}
+              onChangeText={text => {
+                const amount = text.replace(/[^0-9.]/g, '');
+                setNewTransaction(prev => ({ ...prev, amount }));
+                setError('');
+              }}
+              keyboardType="decimal-pad"
+              style={styles.input}
+            />
+
+            <View style={styles.typeContainer}>
+              <Button
+                mode={newTransaction.type === 'expense' ? 'contained' : 'outlined'}
+                onPress={() => setNewTransaction(prev => ({ ...prev, type: 'expense' }))}
+                style={[styles.typeButton, styles.expenseButton]}
+              >
+                Expense
+              </Button>
+              <Button
+                mode={newTransaction.type === 'income' ? 'contained' : 'outlined'}
+                onPress={() => setNewTransaction(prev => ({ ...prev, type: 'income' }))}
+                style={[styles.typeButton, styles.incomeButton]}
+              >
+                Income
+              </Button>
+            </View>
+
+            <TextInput
+              label="Description"
+              value={newTransaction.description}
+              onChangeText={text => {
+                setNewTransaction(prev => ({ ...prev, description: text }));
+                setError('');
+              }}
+              style={styles.input}
+            />
+
+            <Button
+              mode="outlined"
+              onPress={() => setShowDatePicker(true)}
+              style={styles.input}
+            >
+              {newTransaction.date.toLocaleDateString()}
+            </Button>
+
+            {showDatePicker && (
+              <DateTimePicker
+                value={newTransaction.date}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowDatePicker(false);
+                  if (selectedDate) {
+                    setNewTransaction(prev => ({ ...prev, date: selectedDate }));
+                  }
+                }}
+              />
+            )}
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.categoriesContainer}
+            >
+              {TRANSACTION_CATEGORIES
+                .filter(cat => !cat.type || cat.type === newTransaction.type)
+                .map(category => (
+                  <Chip
+                    key={category.id}
+                    selected={newTransaction.category === category.id}
+                    onPress={() => {
+                      setNewTransaction(prev => ({ ...prev, category: category.id }));
+                      setError('');
+                    }}
+                    style={styles.categoryChip}
+                    icon={category.icon}
+                  >
+                    {category.name}
+                  </Chip>
+                ))}
+            </ScrollView>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => {
+              setShowAddDialog(false);
+              resetNewTransaction();
+            }}>Cancel</Button>
+            <Button
+              mode="contained"
+              onPress={handleAddTransaction}
+              loading={loading}
+              disabled={loading}
+            >
+              Add
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+
+      {/* Edit Transaction Dialog */}
+      <Portal>
+        <Dialog visible={showEditDialog} onDismiss={() => {
+          setShowEditDialog(false);
+          resetNewTransaction();
+          setSelectedTransaction(null);
+        }}>
+          <Dialog.Title>Edit Transaction</Dialog.Title>
+          <Dialog.Content>
+            <TextInput
+              label="Amount"
+              value={newTransaction.amount}
+              onChangeText={text => {
+                const amount = text.replace(/[^0-9.]/g, '');
+                setNewTransaction(prev => ({ ...prev, amount }));
+                setError('');
+              }}
+              keyboardType="decimal-pad"
+              style={styles.input}
+            />
+
+            <View style={styles.typeContainer}>
+              <Button
+                mode={newTransaction.type === 'expense' ? 'contained' : 'outlined'}
+                onPress={() => setNewTransaction(prev => ({ ...prev, type: 'expense' }))}
+                style={[styles.typeButton, styles.expenseButton]}
+              >
+                Expense
+              </Button>
+              <Button
+                mode={newTransaction.type === 'income' ? 'contained' : 'outlined'}
+                onPress={() => setNewTransaction(prev => ({ ...prev, type: 'income' }))}
+                style={[styles.typeButton, styles.incomeButton]}
+              >
+                Income
+              </Button>
+            </View>
+
+            <TextInput
+              label="Description"
+              value={newTransaction.description}
+              onChangeText={text => {
+                setNewTransaction(prev => ({ ...prev, description: text }));
+                setError('');
+              }}
+              style={styles.input}
+            />
+
+            <Button
+              mode="outlined"
+              onPress={() => setShowDatePicker(true)}
+              style={styles.input}
+            >
+              {newTransaction.date.toLocaleDateString()}
+            </Button>
+
+            {showDatePicker && (
+              <DateTimePicker
+                value={newTransaction.date}
+                mode="date"
+                display="default"
+                onChange={(event, selectedDate) => {
+                  setShowDatePicker(false);
+                  if (selectedDate) {
+                    setNewTransaction(prev => ({ ...prev, date: selectedDate }));
+                  }
+                }}
+              />
+            )}
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.categoriesContainer}
+            >
+              {TRANSACTION_CATEGORIES
+                .filter(cat => !cat.type || cat.type === newTransaction.type)
+                .map(category => (
+                  <Chip
+                    key={category.id}
+                    selected={newTransaction.category === category.id}
+                    onPress={() => {
+                      setNewTransaction(prev => ({ ...prev, category: category.id }));
+                      setError('');
+                    }}
+                    style={styles.categoryChip}
+                    icon={category.icon}
+                  >
+                    {category.name}
+                  </Chip>
+                ))}
+            </ScrollView>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => {
+              setShowEditDialog(false);
+              resetNewTransaction();
+              setSelectedTransaction(null);
+            }}>Cancel</Button>
+            <Button
+              mode="contained"
+              onPress={handleEditTransaction}
+              loading={loading}
+              disabled={loading}
+            >
+              Update
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 };
@@ -430,74 +573,103 @@ export const TransactionsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
+    backgroundColor: theme.colors.surface,
+    elevation: 2,
   },
-  searchBar: {
-    flex: 1,
+  searchbar: {
+    margin: theme.spacing.sm,
+    elevation: 0,
   },
-  filters: {
-    padding: 8,
-  },
-  filterChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 8,
+  filtersContainer: {
+    paddingHorizontal: theme.spacing.sm,
+    paddingBottom: theme.spacing.sm,
   },
   chip: {
-    marginRight: 8,
-    marginBottom: 8,
+    marginRight: theme.spacing.xs,
   },
-  dateInput: {
-    width: 150,
-    marginRight: 8,
+  sortContainer: {
+    padding: theme.spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    backgroundColor: theme.colors.surface,
+    elevation: 2,
   },
-  list: {
+  sortButton: {
+    marginLeft: theme.spacing.sm,
+  },
+  content: {
     flex: 1,
+  },
+  transactionCard: {
+    marginHorizontal: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
+    borderRadius: theme.roundness,
+    elevation: 1,
+  },
+  amountContainer: {
+    alignItems: 'flex-end',
+  },
+  amount: {
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  category: {
+    fontSize: 12,
+    color: theme.colors.onSurfaceVariant,
   },
   fab: {
     position: 'absolute',
-    margin: 16,
+    margin: theme.spacing.md,
     right: 0,
     bottom: 0,
-  },
-  modal: {
-    backgroundColor: 'white',
-    padding: 20,
-    margin: 20,
-    borderRadius: 8,
-  },
-  modalTitle: {
-    textAlign: 'center',
-    marginBottom: 16,
+    backgroundColor: theme.colors.primary,
   },
   input: {
-    marginBottom: 12,
+    marginBottom: theme.spacing.sm,
+    backgroundColor: theme.colors.surface,
   },
-  segmentedButtons: {
-    marginBottom: 16,
+  typeContainer: {
+    flexDirection: 'row',
+    marginBottom: theme.spacing.sm,
   },
-  categoryContainer: {
-    marginBottom: 16,
+  typeButton: {
+    flex: 1,
+    marginHorizontal: theme.spacing.xs,
   },
-  categoryButton: {
-    marginRight: 8,
+  expenseButton: {
+    borderColor: theme.colors.error,
   },
-  button: {
-    marginTop: 8,
+  incomeButton: {
+    borderColor: theme.colors.success,
   },
-  actionContainer: {
+  categoriesContainer: {
+    marginBottom: theme.spacing.sm,
+  },
+  categoryChip: {
+    marginRight: theme.spacing.xs,
+    marginBottom: theme.spacing.xs,
+  },
+  error: {
+    color: theme.colors.error,
+    marginTop: theme.spacing.xs,
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: theme.spacing.xl,
+  },
+  emptyStateText: {
+    color: theme.colors.onSurfaceVariant,
+    textAlign: 'center',
+  },
+  actionButtons: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  amount: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginRight: 8,
+    marginTop: theme.spacing.xs,
   },
 });
 
